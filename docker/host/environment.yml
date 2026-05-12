@@ -1,0 +1,25 @@
+# =============================================================================
+# environment.yml — Conda environment for xr_teleoperate Host container
+#
+# Mirrors the original project setup command exactly:
+#   conda create -n tv python=3.10 pinocchio=3.1.0 numpy=1.26.4 -c conda-forge
+#
+# Additional packages included here:
+#   casadi  — IK optimisation backend used by robot_arm_ik.py
+#
+# Consumed by micromamba inside the Dockerfile:
+#   micromamba create -y -f /tmp/environment.yml
+# =============================================================================
+
+name: tv
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pinocchio=3.1.0
+  - numpy=1.26.4
+  - casadi>=3.6
+  - pip

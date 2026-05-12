@@ -1,0 +1,62 @@
+# =============================================================================
+# cam_config_server.yaml — Camera configuration for teleimager image server
+#
+# This file lives on PC2 (the robot's onboard compute unit) and tells the
+# teleimager server which cameras to capture and how to publish them.
+#
+# Your hardware:
+#   - Head camera : Intel RealSense D435i (built into G1 head, monocular RGB)
+#   - Wrist cams  : Not installed (leave wrist sections as enable_zmq: false)
+#
+# The server publishes frames over ZMQ to the Host's image client.
+# The Host then forwards the head feed to the Meta Quest 3 via WebRTC/WebSocket.
+# =============================================================================
+
+head_camera:
+  # ---------------------------------------------------------------------------
+  # RealSense D435i (built-in head camera)
+  # ---------------------------------------------------------------------------
+
+  # Set to true for stereo (side-by-side) cameras, false for the standard
+  # monocular D435i. Your robot has a single D435i → set false.
+  binocular: false
+
+  # Image resolution [height, width].
+  # D435i RGB stream: native 1920×1080, but 640×480 is faster and sufficient
+  # for the VR view at 30fps.
+  image_shape: [480, 640]
+
+  # Capture frame rate. 30fps is the standard D435i RGB mode.
+  fps: 30
+
+  # ZMQ publisher: streams frames to the Host image client via TCP.
+  # The Host subscribes on tcp://<PC2_IP>:5555 automatically.
+  enable_zmq: true
+
+  # WebRTC: enables a direct HTTPS stream from PC2 to the Quest 3 browser.
+  # Useful for verifying camera feed before teleoperation (visit port 60001).
+  # Set to false if you don't need the direct preview.
+  enable_webrtc: false
+  webrtc_port: 60001
+
+  # ZMQ bind address and port.
+  zmq_host: "0.0.0.0"
+  zmq_port: 5555
+
+# ---------------------------------------------------------------------------
+# Left wrist camera (optional — D405 or monocular 60fps)
+# Not installed in your current setup. Set enable_zmq: false to disable.
+# ---------------------------------------------------------------------------
+left_wrist_camera:
+  enable_zmq: false
+  image_shape: [480, 640]
+  fps: 60
+
+# ---------------------------------------------------------------------------
+# Right wrist camera (optional — D405 or monocular 60fps)
+# Not installed in your current setup. Set enable_zmq: false to disable.
+# ---------------------------------------------------------------------------
+right_wrist_camera:
+  enable_zmq: false
+  image_shape: [480, 640]
+  fps: 60

@@ -1,0 +1,69 @@
+# =============================================================================
+# docker-compose.pc2.yml — PC2 IMAGE SERVER (G1 robot's onboard compute unit)
+#
+# This file is deployed on the G1's onboard Development Computing Unit (PC2).
+# PC2 has a fixed IP of 192.168.123.164 on the robot's internal network.
+#
+# Usage (run on PC2 via SSH):
+#   docker compose -f docker-compose.pc2.yml up          # start image server
+#   docker compose -f docker-compose.pc2.yml up --build  # rebuild first
+#   docker compose -f docker-compose.pc2.yml down        # stop
+#
+# Prerequisites (on PC2):
+#   1. Copy certs/ from Host via: scp certs/ unitree@192.168.123.164:~/g1_xr_teleop/certs/
+#   2. Edit configs/cam_config_server.yaml to match your camera hardware
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PC2 SERVICE — teleimager image server
+  #
+  # Responsibilities:
+  #   - Captures frames from the G1's head RealSense D435i camera via USB
+  #   - Publishes frames to the Host over ZMQ (port 5555)
+  #   - Optionally serves a WebRTC HTTPS preview on port 60001 so the
+  #     Quest 3 can verify the camera feed directly in its browser
+  # ---------------------------------------------------------------------------
+  pc2:
+    build:
+      context: ./docker/pc2
+      dockerfile: Dockerfile
+    image: g1_xr_teleop/pc2:latest
+    container_name: g1_teleop_pc2
+
+    # Use host networking so ZMQ and WebRTC are reachable on 192.168.123.164
+    network_mode: host
+
+    environment:
+      XR_TELEOP_CERT: /certs/cert.pem
+      XR_TELEOP_KEY: /certs/key.pem
+      CAM_CONFIG: /config/cam_config_server.yaml
+      ZMQ_PORT: ${ZMQ_PORT:-5555}
+
+    volumes:
+      # SSL certificates (copied from Host machine)
+      - ./certs:/certs:ro
+
+      # Camera configuration file (edit to match your hardware)
+      - ./configs:/config:ro
+
+    # USB passthrough required for RealSense D435i and optional wrist cameras
+    # The device paths may differ — check `ls /dev/video*` on PC2
+    devices:
+      - /dev/bus/usb:/dev/bus/usb   # All USB devices (RealSense udev rules)
+
+    # privileged gives full USB device access for RealSense udev rules
+    privileged: true
+
+    ports:
+      - "5555:5555"   # ZMQ publisher (Host subscribes to frames here)
+      - "60001:60001" # WebRTC preview HTTPS endpoint for Quest 3 browser
+
+    restart: unless-stopped
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
