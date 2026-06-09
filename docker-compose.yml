@@ -59,6 +59,7 @@ services:
       # -----------------------------------------------------------------------
       # Optional mode flags (set to "true" to enable)
       # -----------------------------------------------------------------------
+      AUTO_START: ${AUTO_START:-true}    # Skip [r] key — start tracking as soon as container is ready
       MOTION: ${MOTION:-false}        # Arm + locomotion (requires waist motor)
       HEADLESS: ${HEADLESS:-false}    # No display (e.g. running on PC2 itself)
       SIM: ${SIM:-false}              # Isaac Lab simulation mode
@@ -93,9 +94,17 @@ services:
       # is visible (upstream uses ["left"]/["right"] which throws KeyError).
       - ./docker/host/televuer_patch.py:/opt/xr_teleoperate/teleop/televuer/src/televuer/televuer.py:ro
 
+      # Patched robot_hand_unitree.py — replaces infinite DDS wait with a
+      # 10-second timeout so arm teleop works even when the Dex3-1 hand
+      # service is not running on the robot.
+      - ./docker/host/robot_hand_unitree_patch.py:/opt/xr_teleoperate/teleop/robot_control/robot_hand_unitree.py:ro
+
+      # Patched teleop_hand_and_arm.py — adds --auto-start flag support.
+      - ./docker/host/teleop_hand_and_arm_patch.py:/opt/xr_teleoperate/teleop/teleop_hand_and_arm.py:ro
+
       # Optional: mount local xr_teleoperate checkout for live code editing
       # Uncomment to develop without rebuilding the image on every change.
-      # - ./xr_teleoperate:/opt/xr_teleoperate
+      - ./xr_teleoperate:/opt/xr_teleoperate
 
     ports:
       # Vuer WebXR server — Quest 3 connects to this via its browser

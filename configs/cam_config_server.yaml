@@ -16,6 +16,8 @@ head_camera:
   # ---------------------------------------------------------------------------
   # RealSense D435i (built-in head camera)
   # ---------------------------------------------------------------------------
+  type: realsense
+  serial_number: "246422071225"
 
   # Set to true for stereo (side-by-side) cameras, false for the standard
   # monocular D435i. Your robot has a single D435i → set false.
@@ -27,16 +29,16 @@ head_camera:
   image_shape: [480, 640]
 
   # Capture frame rate. 30fps is the standard D435i RGB mode.
-  fps: 30
+  fps: 15
 
   # ZMQ publisher: streams frames to the Host image client via TCP.
   # The Host subscribes on tcp://<PC2_IP>:5555 automatically.
-  enable_zmq: true
+  enable_zmq: false
 
   # WebRTC: enables a direct HTTPS stream from PC2 to the Quest 3 browser.
   # Useful for verifying camera feed before teleoperation (visit port 60001).
   # Set to false if you don't need the direct preview.
-  enable_webrtc: false
+  enable_webrtc: true
   webrtc_port: 60001
 
   # ZMQ bind address and port.

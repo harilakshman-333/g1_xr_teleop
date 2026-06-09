@@ -43,6 +43,11 @@ info "  Cam config  : ${CONFIG_FILE}"
 info "========================================================="
 
 # ---------------------------------------------------------------------------
-# Start teleimager image server
+# Symlink or copy config file to where teleimager expects it
 # ---------------------------------------------------------------------------
-exec python -m teleimager.image_server --config "${CONFIG_FILE}"
+ln -sf "${CONFIG_FILE}" /opt/teleimager/cam_config_server.yaml
+
+# ---------------------------------------------------------------------------
+# Start teleimager image server with RealSense support enabled
+# ---------------------------------------------------------------------------
+exec python -u -m teleimager.image_server --rs

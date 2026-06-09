@@ -60,6 +60,7 @@ ARGS=(
     --task-steps="${TASK_STEPS:-step1: do this; step2: do that;}"
 )
 [[ -n "${NETWORK_INTERFACE}" ]] && ARGS+=(--network-interface="${NETWORK_INTERFACE}")
+[[ "${AUTO_START}" == "true" ]] && ARGS+=(--auto-start)
 
 # ---------------------------------------------------------------------------
 # 4. Print startup summary

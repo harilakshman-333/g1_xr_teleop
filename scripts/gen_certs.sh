@@ -47,30 +47,37 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------------------------------------------------------
-# Auto-detect the Host IP on the robot-facing network interface
-# We look for a 192.168.123.x address first (robot subnet), then fall back
-# to any non-loopback IPv4 address.
+# Auto-detect ALL non-loopback, non-Docker IPv4 addresses.
+# All of them will be added as SANs so the Quest 3 (on Wi-Fi) and the
+# robot subnet (192.168.123.x, wired) both work without cert errors.
 # ---------------------------------------------------------------------------
-section "Detecting Host IP address"
+section "Detecting Host IP addresses"
 
-if [[ -z "${HOST_IP}" ]]; then
-    # Try robot subnet first (192.168.123.x)
-    HOST_IP=$(ip -4 addr show | grep -oP '192\.168\.123\.\d+' | head -1 || true)
+# Collect all non-loopback IPs, excluding Docker bridge ranges (172.x)
+ALL_IPS=()
+while IFS= read -r ip; do
+    ALL_IPS+=("$ip")
+done < <(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v -E '^(127\.|172\.)')
 
-    if [[ -z "${HOST_IP}" ]]; then
-        # Fall back to first non-loopback IPv4
-        HOST_IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127\.0\.0\.1' | head -1 || true)
-    fi
-
-    if [[ -z "${HOST_IP}" ]]; then
-        error "Could not auto-detect Host IP. Run with: --host-ip <your-ip>"
-    fi
-
-    info "Auto-detected Host IP: ${HOST_IP}"
-    warn "If this is wrong, re-run: ./scripts/gen_certs.sh --host-ip <correct-ip>"
-else
-    info "Using provided Host IP: ${HOST_IP}"
+if [[ ${#ALL_IPS[@]} -eq 0 ]]; then
+    error "Could not auto-detect any Host IP. Run with: --host-ip <your-ip>"
 fi
+
+# If user supplied --host-ip, put it first; otherwise use all detected IPs
+if [[ -n "${HOST_IP}" ]]; then
+    # Merge: user IP first, then remaining detected IPs (dedup)
+    MERGED=("${HOST_IP}")
+    for ip in "${ALL_IPS[@]}"; do
+        [[ "$ip" != "${HOST_IP}" ]] && MERGED+=("$ip")
+    done
+    ALL_IPS=("${MERGED[@]}")
+    info "Using provided Host IP (primary): ${HOST_IP}"
+fi
+
+HOST_IP="${ALL_IPS[0]}"
+info "Primary IP (CN): ${HOST_IP}"
+info "All IPs in SAN: ${ALL_IPS[*]}"
+warn "Quest 3 must be on the same Wi-Fi as one of the above IPs."
 
 # ---------------------------------------------------------------------------
 # Check openssl is available
@@ -102,6 +109,15 @@ fi
 section "Generating certificate"
 
 SAN_CONFIG="${CERTS_DIR}/san.cnf"
+
+# Build the [alt_names] block dynamically from ALL_IPS
+ALT_NAMES="DNS.1 = localhost\nIP.1  = 127.0.0.1"
+IDX=2
+for ip in "${ALL_IPS[@]}"; do
+    ALT_NAMES+="\nIP.${IDX}  = ${ip}"
+    (( IDX++ ))
+done
+
 cat > "${SAN_CONFIG}" <<EOF
 [req]
 default_bits       = 2048
@@ -123,9 +139,7 @@ keyUsage       = nonRepudiation, digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
 
 [alt_names]
-DNS.1 = localhost
-IP.1  = 127.0.0.1
-IP.2  = ${HOST_IP}
+$(echo -e "${ALT_NAMES}")
 EOF
 
 info "SAN config written to: ${SAN_CONFIG}"
