@@ -29,16 +29,16 @@ head_camera:
   image_shape: [480, 640]
 
   # Capture frame rate. 30fps is the standard D435i RGB mode.
-  fps: 15
+  fps: 30
 
   # ZMQ publisher: streams frames to the Host image client via TCP.
   # The Host subscribes on tcp://<PC2_IP>:5555 automatically.
-  enable_zmq: false
+  enable_zmq: true
 
   # WebRTC: enables a direct HTTPS stream from PC2 to the Quest 3 browser.
   # Useful for verifying camera feed before teleoperation (visit port 60001).
   # Set to false if you don't need the direct preview.
-  enable_webrtc: true
+  enable_webrtc: false
   webrtc_port: 60001
 
   # ZMQ bind address and port.

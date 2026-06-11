@@ -90,10 +90,8 @@ class TeleVuer:
 
         self.vuer = Vuer(host='0.0.0.0', cert=cert_file, key=key_file, queries=dict(grid=False), queue_len=3)
         self.vuer.add_handler("CAMERA_MOVE")(self.on_cam_move)
-        if self.use_hand_tracking:
-            self.vuer.add_handler("HAND_MOVE")(self.on_hand_move)
-        else:
-            self.vuer.add_handler("CONTROLLER_MOVE")(self.on_controller_move)
+        self.vuer.add_handler("HAND_MOVE")(self.on_hand_move)
+        self.vuer.add_handler("CONTROLLER_MOVE")(self.on_controller_move)
 
         self.display_mode = display_mode
         self.zmq = zmq
@@ -135,6 +133,7 @@ class TeleVuer:
         
         self.vuer.spawn(start=False)(fn)
 
+        self.motion_data_ready_shared = Value('b', False, lock=True)
         self.head_pose_shared = Array('d', 16, lock=True)
         self.left_arm_pose_shared = Array('d', 16, lock=True)
         self.right_arm_pose_shared = Array('d', 16, lock=True)
@@ -202,6 +201,10 @@ class TeleVuer:
         if self.webrtc or self.display_mode == "pass-through":
             print("[TeleVuer] Warning: render_to_xr is ignored when webrtc is enabled or pass_through is True.")
             return
+        if hasattr(image, "bgr"):
+            image = image.bgr
+        if image is None:
+            return
         self.latest_frame = image
         self.new_frame_event.set()
 
@@ -220,6 +223,11 @@ class TeleVuer:
 
     async def on_cam_move(self, event, session, fps=60):
         try:
+            if not getattr(self, "_cam_move_logged", False):
+                import logging as _logging
+                _logging.getLogger("televuer.cam").warning("🟢 WebXR Camera/Head tracking active: received first CAMERA_MOVE event")
+                self._cam_move_logged = True
+
             with self.head_pose_shared.get_lock():
                 self.head_pose_shared[:] = event.value["camera"]["matrix"]
         except:
@@ -227,7 +235,16 @@ class TeleVuer:
 
     async def on_controller_move(self, event, session, fps=60):
         """https://docs.vuer.ai/en/latest/examples/20_motion_controllers.html"""
+        import logging as _logging
+        _logger = _logging.getLogger("televuer.controller")
+        if self.use_hand_tracking:
+            if not getattr(self, "_controller_warning_logged", False):
+                _logger.warning("⚠️ WARNING: Received CONTROLLER_MOVE event, but Hand Tracking is selected. Please set aside your Meta Quest controllers to let the headset switch to bare hand tracking!")
+                self._controller_warning_logged = True
+            return
         try:
+            with self.motion_data_ready_shared.get_lock():
+                self.motion_data_ready_shared.value = True
             # ControllerData
             with self.left_arm_pose_shared.get_lock():
                 self.left_arm_pose_shared[:] = event.value["left"]
@@ -272,17 +289,33 @@ class TeleVuer:
         """
         import logging as _logging
         _logger = _logging.getLogger("televuer.hand")
+        if not self.use_hand_tracking:
+            if not getattr(self, "_hand_warning_logged", False):
+                _logger.warning("⚠️ WARNING: Received HAND_MOVE event, but Controller Tracking is selected. Please check your config!")
+                self._hand_warning_logged = True
+            return
         try:
+            with self.motion_data_ready_shared.get_lock():
+                self.motion_data_ready_shared.value = True
             # HandsData — 'left' and 'right' are optional (hand may be occluded)
             left_hand_data  = event.value.get("left")
             right_hand_data = event.value.get("right")
             left_hand  = event.value.get("leftState",  {})
             right_hand = event.value.get("rightState", {})
 
+            # Filter out invalid or placeholder (e.g. ExtType(0, b'\x00') for undefined/absent) hand data
+            import numpy as np
+            if left_hand_data is not None:
+                if not isinstance(left_hand_data, (list, np.ndarray)) or len(left_hand_data) != 400:
+                    left_hand_data = None
+            if right_hand_data is not None:
+                if not isinstance(right_hand_data, (list, np.ndarray)) or len(right_hand_data) != 400:
+                    right_hand_data = None
+
             # Log a one-shot confirmation the first time we get real data
             if not getattr(self, "_hand_move_logged", False):
                 _logger.warning(
-                    f"[HAND_MOVE] first event received — "
+                    f"🟢 WebXR Hand Tracking active: received first HAND_MOVE event — "
                     f"left={'present' if left_hand_data is not None else 'missing'}, "
                     f"right={'present' if right_hand_data is not None else 'missing'}"
                 )
@@ -329,7 +362,23 @@ class TeleVuer:
 
         except Exception as _e:
             import logging as _logging
-            _logging.getLogger("televuer.hand").warning(f"[on_hand_move] exception: {_e}")
+            import traceback as _traceback
+            _logger = _logging.getLogger("televuer.hand")
+            _logger.warning(f"[on_hand_move] exception: {_e}")
+            _logger.warning("Traceback:")
+            for line in _traceback.format_exc().splitlines():
+                _logger.warning(line)
+            if 'left_hand_data' in locals():
+                try:
+                    _logger.warning(f"left_hand_data type: {type(left_hand_data)}")
+                    if hasattr(left_hand_data, '__len__'):
+                        _logger.warning(f"left_hand_data len: {len(left_hand_data)}")
+                        if len(left_hand_data) > 0:
+                            _logger.warning(f"left_hand_data[0] type: {type(left_hand_data[0])}")
+                            if hasattr(left_hand_data[0], '__len__'):
+                                _logger.warning(f"left_hand_data[0] len: {len(left_hand_data[0])}")
+                except Exception as _inner_e:
+                    _logger.warning(f"Could not inspect left_hand_data: {_inner_e}")
     
     ## immersive MODE
     async def main_image_binocular_zmq(self, session):
@@ -338,8 +387,8 @@ class TeleVuer:
                 Hands(
                     stream=True,
                     key="hands",
-                    hideLeft=True,
-                    hideRight=True
+                    hideLeft=False,
+                    hideRight=False
                 ),
                 to="bgChildren",
             )
@@ -365,7 +414,7 @@ class TeleVuer:
                         # Below we set the two image planes, left and right, to layers=1 and layers=2. 
                         # Note that these two masks are associated with left eye’s camera and the right eye’s camera.
                         layers=1,
-                        format="jpeg",
+                        format="b64jpeg",
                         quality=80,
                         key="background-left",
                         interpolate=True,
@@ -376,9 +425,19 @@ class TeleVuer:
                         height=1,
                         distanceToCamera=1,
                         layers=2,
-                        format="jpeg",
+                        format="b64jpeg",
                         quality=80,
                         key="background-right",
+                        interpolate=True,
+                    ),
+                    ImageBackground(
+                        self.img2display[:, :self.img_width],
+                        aspect=self.aspect_ratio,
+                        height=1,
+                        distanceToCamera=1,
+                        format="b64jpeg",
+                        quality=80,
+                        key="background-2d",
                         interpolate=True,
                     ),
                 ],
@@ -393,8 +452,8 @@ class TeleVuer:
                 Hands(
                     stream=True,
                     key="hands",
-                    hideLeft=True,
-                    hideRight=True
+                    hideLeft=False,
+                    hideRight=False
                 ),
                 to="bgChildren",
             )
@@ -417,9 +476,31 @@ class TeleVuer:
                         aspect=self.aspect_ratio,
                         height=1,
                         distanceToCamera=1,
-                        format="jpeg",
+                        layers=1,
+                        format="b64jpeg",
                         quality=80,
-                        key="background-mono",
+                        key="background-left",
+                        interpolate=True,
+                    ),
+                    ImageBackground(
+                        self.img2display,
+                        aspect=self.aspect_ratio,
+                        height=1,
+                        distanceToCamera=1,
+                        layers=2,
+                        format="b64jpeg",
+                        quality=80,
+                        key="background-right",
+                        interpolate=True,
+                    ),
+                    ImageBackground(
+                        self.img2display,
+                        aspect=self.aspect_ratio,
+                        height=1,
+                        distanceToCamera=1,
+                        format="b64jpeg",
+                        quality=80,
+                        key="background-2d",
                         interpolate=True,
                     ),
                 ],
@@ -433,8 +514,8 @@ class TeleVuer:
                 Hands(
                     stream=True,
                     key="hands",
-                    hideLeft=True,
-                    hideRight=True
+                    hideLeft=False,
+                    hideRight=False
                 ),
                 to="bgChildren",
             )
@@ -470,8 +551,8 @@ class TeleVuer:
                 Hands(
                     stream=True,
                     key="hands",
-                    hideLeft=True,
-                    hideRight=True
+                    hideLeft=False,
+                    hideRight=False
                 ),
                 to="bgChildren",
             )
@@ -507,8 +588,8 @@ class TeleVuer:
                 Hands(
                     stream=True,
                     key="hands",
-                    hideLeft=True,
-                    hideRight=True
+                    hideLeft=False,
+                    hideRight=False
                 ),
                 to="bgChildren",
             )
@@ -534,7 +615,7 @@ class TeleVuer:
                         # Below we set the two image planes, left and right, to layers=1 and layers=2. 
                         # Note that these two masks are associated with left eye’s camera and the right eye’s camera.
                         layers=1,
-                        format="jpeg",
+                        format="b64jpeg",
                         quality=80,
                         key="background-left",
                         interpolate=True,
@@ -545,9 +626,19 @@ class TeleVuer:
                         height=0.75,
                         distanceToCamera=2,
                         layers=2,
-                        format="jpeg",
+                        format="b64jpeg",
                         quality=80,
                         key="background-right",
+                        interpolate=True,
+                    ),
+                    ImageBackground(
+                        self.img2display[:, :self.img_width],
+                        aspect=self.aspect_ratio,
+                        height=0.75,
+                        distanceToCamera=2,
+                        format="b64jpeg",
+                        quality=80,
+                        key="background-2d",
                         interpolate=True,
                     ),
                 ],
@@ -562,8 +653,8 @@ class TeleVuer:
                 Hands(
                     stream=True,
                     key="hands",
-                    hideLeft=True,
-                    hideRight=True
+                    hideLeft=False,
+                    hideRight=False
                 ),
                 to="bgChildren",
             )
@@ -586,9 +677,31 @@ class TeleVuer:
                         aspect=self.aspect_ratio,
                         height=0.75,
                         distanceToCamera=2,
-                        format="jpeg",
+                        layers=1,
+                        format="b64jpeg",
                         quality=80,
-                        key="background-mono",
+                        key="background-left",
+                        interpolate=True,
+                    ),
+                    ImageBackground(
+                        self.img2display,
+                        aspect=self.aspect_ratio,
+                        height=0.75,
+                        distanceToCamera=2,
+                        layers=2,
+                        format="b64jpeg",
+                        quality=80,
+                        key="background-right",
+                        interpolate=True,
+                    ),
+                    ImageBackground(
+                        self.img2display,
+                        aspect=self.aspect_ratio,
+                        height=0.75,
+                        distanceToCamera=2,
+                        format="b64jpeg",
+                        quality=80,
+                        key="background-2d",
                         interpolate=True,
                     ),
                 ],
@@ -602,8 +715,8 @@ class TeleVuer:
                 Hands(
                     stream=True,
                     key="hands",
-                    hideLeft=True,
-                    hideRight=True
+                    hideLeft=False,
+                    hideRight=False
                 ),
                 to="bgChildren",
             )
@@ -639,8 +752,8 @@ class TeleVuer:
                 Hands(
                     stream=True,
                     key="hands",
-                    hideLeft=True,
-                    hideRight=True
+                    hideLeft=False,
+                    hideRight=False
                 ),
                 to="bgChildren",
             )
@@ -676,8 +789,8 @@ class TeleVuer:
                 Hands(
                     stream=True,
                     key="hands",
-                    hideLeft=True,
-                    hideRight=True
+                    hideLeft=False,
+                    hideRight=False
                 ),
                 to="bgChildren",
             )
@@ -696,6 +809,12 @@ class TeleVuer:
             await asyncio.sleep(1.0 / self.display_fps)
 
     # ==================== common data ====================
+    @property
+    def motion_data_ready(self):
+        """bool, whether the first motion data event has been received."""
+        with self.motion_data_ready_shared.get_lock():
+            return self.motion_data_ready_shared.value
+
     @property
     def head_pose(self):
         """np.ndarray, shape (4, 4), head SE(3) pose matrix from Vuer (basis OpenXR Convention)."""
