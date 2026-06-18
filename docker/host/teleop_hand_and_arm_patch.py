@@ -36,6 +36,45 @@ STOP           = False  # Enable to begin system exit procedure
 READY          = False  # Ready to (1) enter START state, (2) enter RECORD_RUNNING state
 RECORD_RUNNING = False  # True if [Recording]
 RECORD_TOGGLE  = False  # Toggle recording state
+
+# ---------------------------------------------------------------------------
+# Workspace Boundary: Cartesian limits in the robot's base frame (metres).
+# Only wrist target positions that fall outside these bounds will be clamped
+# to the nearest valid point on the boundary surface.  Rotation is untouched.
+#
+# Axes convention (robot standing upright, facing forward / +X):
+#   X → forward (+) / backward (-)   Y → left (+) / right (-)   Z → up (+)
+#
+# Tune these to match your physical setup and safety requirements.
+# ---------------------------------------------------------------------------
+WS_LIMITS = {
+    # Forward / backward reach  (negative X = behind the robot's torso)
+    "x_min":  0.10,   # arm must stay in front of the robot's chest
+    "x_max":  0.75,   # max forward reach
+    # Left / right reach
+    "y_min": -0.60,   # max reach to the right
+    "y_max":  0.60,   # max reach to the left
+    # Up / down reach  (Z=0 is the robot's waist/base)
+    "z_min": -0.20,   # arms may drop slightly below the waist
+    "z_max":  0.60,   # arms must stay below the shoulder-height ceiling
+}
+
+def clamp_wrist_pose(pose: 'np.ndarray') -> 'np.ndarray':
+    """
+    Clamp the translational component of a 4x4 SE3 wrist target pose so that
+    the end-effector stays within WS_LIMITS.  The rotation block is preserved.
+
+    Args:
+        pose: (4, 4) numpy array — SE3 transform from robot base to wrist target.
+    Returns:
+        A copy of ``pose`` with translation clamped to the workspace box.
+    """
+    import numpy as _np
+    clamped = pose.copy()
+    clamped[0, 3] = _np.clip(pose[0, 3], WS_LIMITS["x_min"], WS_LIMITS["x_max"])
+    clamped[1, 3] = _np.clip(pose[1, 3], WS_LIMITS["y_min"], WS_LIMITS["y_max"])
+    clamped[2, 3] = _np.clip(pose[2, 3], WS_LIMITS["z_min"], WS_LIMITS["z_max"])
+    return clamped
 #  -------        ---------                -----------                -----------            ---------
 #   state          [Ready]      ==>        [Recording]     ==>         [AutoSave]     -->     [Ready]
 #  -------        ---------      |         -----------      |         -----------      |     ---------
@@ -348,9 +387,15 @@ if __name__ == '__main__':
             current_lr_arm_q  = arm_ctrl.get_current_dual_arm_q()
             current_lr_arm_dq = arm_ctrl.get_current_dual_arm_dq()
 
+            # Clamp wrist target poses to the configured workspace boundaries
+            # before passing them to the IK solver, preventing the robot from
+            # trying to reach behind its body or into unsafe positions.
+            left_wrist_clamped  = clamp_wrist_pose(tele_data.left_wrist_pose)
+            right_wrist_clamped = clamp_wrist_pose(tele_data.right_wrist_pose)
+
             # solve ik using motor data and wrist pose, then use ik results to control arms.
             time_ik_start = time.time()
-            sol_q, sol_tauff  = arm_ik.solve_ik(tele_data.left_wrist_pose, tele_data.right_wrist_pose, current_lr_arm_q, current_lr_arm_dq)
+            sol_q, sol_tauff  = arm_ik.solve_ik(left_wrist_clamped, right_wrist_clamped, current_lr_arm_q, current_lr_arm_dq)
             time_ik_end = time.time()
             logger_mp.debug(f"ik:\t{round(time_ik_end - time_ik_start, 6)}")
             arm_ctrl.ctrl_dual_arm(sol_q, sol_tauff)
