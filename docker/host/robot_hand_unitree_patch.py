@@ -208,7 +208,7 @@ class Dex3_1_Controller:
                     ref_left_value = left_hand_data[self.hand_retargeting.left_indices[1,:]] - left_hand_data[self.hand_retargeting.left_indices[0,:]]
                     left_q_target  = self.hand_retargeting.left_retargeting.retarget(ref_left_value)[self.hand_retargeting.left_dex_retargeting_to_hardware]
 
-                if not np.all(right_hand_data == 0.0):
+                if not np.all(right_hand_data == 0.0) and not np.all(right_hand_data[4] == np.array([-1.13, 0.3, -0.15])):
                     ref_right_value = right_hand_data[self.hand_retargeting.right_indices[1,:]] - right_hand_data[self.hand_retargeting.right_indices[0,:]]
                     right_q_target = self.hand_retargeting.right_retargeting.retarget(ref_right_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
 
