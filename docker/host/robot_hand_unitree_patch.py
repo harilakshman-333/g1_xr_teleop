@@ -27,8 +27,8 @@ logger_mp = logging_mp.getLogger(__name__)
 Dex3_Num_Motors = 7
 kTopicDex3LeftCommand = "rt/dex3/left/cmd"
 kTopicDex3RightCommand = "rt/dex3/right/cmd"
-kTopicDex3LeftState = "rt/dex3/left/state"
-kTopicDex3RightState = "rt/dex3/right/state"
+kTopicDex3LeftState = "rt/lf/dex3/left/state"
+kTopicDex3RightState = "rt/lf/dex3/right/state"
 
 
 class Dex3_1_Controller:
@@ -88,14 +88,14 @@ class Dex3_1_Controller:
         # we log an error and continue so that arm teleop still works.
         _dds_wait_start = time.time()
         _DDS_TIMEOUT_S = 10.0
-        while not (any(self.left_hand_state_array) and any(self.right_hand_state_array)):
+        while not (any(self.left_hand_state_array) or any(self.right_hand_state_array)):
             if time.time() - _dds_wait_start > _DDS_TIMEOUT_S:
                 logger_mp.error(
                     "[Dex3_1_Controller] TIMEOUT: rt/dex3/left/state and "
                     "rt/dex3/right/state not received after %.0fs. "
                     "The Dex3-1 hand service on the robot may not be running. "
-                    "SSH into the robot (unitree@192.168.123.161) and check: "
-                    "'ps aux | grep dex' — arm teleop will continue without "
+                    "Please verify that the physical hands are powered on and "
+                    "communicating on the network. Arm teleop will continue without "
                     "finger control.", _DDS_TIMEOUT_S
                 )
                 break
@@ -114,11 +114,12 @@ class Dex3_1_Controller:
     def _subscribe_hand_state(self):
         while True:
             left_hand_msg  = self.LeftHandState_subscriber.Read()
-            right_hand_msg = self.RightHandState_subscriber.Read()
-            if left_hand_msg is not None and right_hand_msg is not None:
+            if left_hand_msg is not None:
                 # Update left hand state
                 for idx, id in enumerate(Dex3_1_Left_JointIndex):
                     self.left_hand_state_array[idx] = left_hand_msg.motor_state[id].q
+            right_hand_msg = self.RightHandState_subscriber.Read()
+            if right_hand_msg is not None:
                 # Update right hand state
                 for idx, id in enumerate(Dex3_1_Right_JointIndex):
                     self.right_hand_state_array[idx] = right_hand_msg.motor_state[id].q
@@ -197,11 +198,12 @@ class Dex3_1_Controller:
                 # Read left and right q_state from shared arrays
                 state_data = np.concatenate((np.array(left_hand_state_array[:]), np.array(right_hand_state_array[:])))
 
-                if not np.all(right_hand_data == 0.0) and not np.all(left_hand_data[4] == np.array([-1.13, 0.3, 0.15])): # if hand data has been initialized.
+                if not np.all(left_hand_data == 0.0) and not np.all(left_hand_data[4] == np.array([-1.13, 0.3, 0.15])):
                     ref_left_value = left_hand_data[self.hand_retargeting.left_indices[1,:]] - left_hand_data[self.hand_retargeting.left_indices[0,:]]
-                    ref_right_value = right_hand_data[self.hand_retargeting.right_indices[1,:]] - right_hand_data[self.hand_retargeting.right_indices[0,:]]
-
                     left_q_target  = self.hand_retargeting.left_retargeting.retarget(ref_left_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
+
+                if not np.all(right_hand_data == 0.0):
+                    ref_right_value = right_hand_data[self.hand_retargeting.right_indices[1,:]] - right_hand_data[self.hand_retargeting.right_indices[0,:]]
                     right_q_target = self.hand_retargeting.right_retargeting.retarget(ref_right_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
 
                 # get dual hand action
@@ -313,11 +315,12 @@ class Dex1_1_Gripper_Controller:
     def _subscribe_gripper_state(self):
         while True:
             left_gripper_msg  = self.LeftGripperState_subscriber.Read()
-            right_gripper_msg  = self.RightGripperState_subscriber.Read()
-            self.gripper_sub_ready = True
-            if left_gripper_msg is not None and right_gripper_msg is not None:
+            if left_gripper_msg is not None:
                 self.left_gripper_state_value.value = left_gripper_msg.states[0].q
+            right_gripper_msg  = self.RightGripperState_subscriber.Read()
+            if right_gripper_msg is not None:
                 self.right_gripper_state_value.value = right_gripper_msg.states[0].q
+            self.gripper_sub_ready = True
             time.sleep(0.002)
     
     def ctrl_dual_gripper(self, dual_gripper_action):
