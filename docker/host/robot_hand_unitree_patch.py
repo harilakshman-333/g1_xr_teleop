@@ -78,6 +78,10 @@ class Dex3_1_Controller:
         self.left_hand_state_array  = Array('d', Dex3_Num_Motors, lock=True)  
         self.right_hand_state_array = Array('d', Dex3_Num_Motors, lock=True)
 
+        # Flag set by _subscribe_hand_state when the first DDS message arrives.
+        # We cannot use any(state_array) because joint values may be 0.0 at rest.
+        self.hand_state_received = Value('b', False, lock=True)
+
         # initialize subscribe thread
         self.subscribe_state_thread = threading.Thread(target=self._subscribe_hand_state)
         self.subscribe_state_thread.daemon = True
@@ -88,11 +92,11 @@ class Dex3_1_Controller:
         # we log an error and continue so that arm teleop still works.
         _dds_wait_start = time.time()
         _DDS_TIMEOUT_S = 10.0
-        while not (any(self.left_hand_state_array) or any(self.right_hand_state_array)):
+        while not self.hand_state_received.value:
             if time.time() - _dds_wait_start > _DDS_TIMEOUT_S:
                 logger_mp.error(
-                    "[Dex3_1_Controller] TIMEOUT: rt/dex3/left/state and "
-                    "rt/dex3/right/state not received after %.0fs. "
+                    "[Dex3_1_Controller] TIMEOUT: hand state topics not "
+                    "received after %.0fs. "
                     "The Dex3-1 hand service on the robot may not be running. "
                     "Please verify that the physical hands are powered on and "
                     "communicating on the network. Arm teleop will continue without "
@@ -115,14 +119,16 @@ class Dex3_1_Controller:
         while True:
             left_hand_msg  = self.LeftHandState_subscriber.Read()
             if left_hand_msg is not None:
-                # Update left hand state
                 for idx, id in enumerate(Dex3_1_Left_JointIndex):
                     self.left_hand_state_array[idx] = left_hand_msg.motor_state[id].q
+                if not self.hand_state_received.value:
+                    self.hand_state_received.value = True
             right_hand_msg = self.RightHandState_subscriber.Read()
             if right_hand_msg is not None:
-                # Update right hand state
                 for idx, id in enumerate(Dex3_1_Right_JointIndex):
                     self.right_hand_state_array[idx] = right_hand_msg.motor_state[id].q
+                if not self.hand_state_received.value:
+                    self.hand_state_received.value = True
             time.sleep(0.002)
     
     class _RIS_Mode:

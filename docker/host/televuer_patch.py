@@ -303,13 +303,41 @@ class TeleVuer:
             left_hand  = event.value.get("leftState",  {})
             right_hand = event.value.get("rightState", {})
 
-            # Filter out invalid or placeholder (e.g. ExtType(0, b'\x00') for undefined/absent) hand data
+            # Diagnostic: log the raw hand data type/shape on the first few events
             import numpy as np
+            if not getattr(self, "_hand_diag_count", 0):
+                self._hand_diag_count = 0
+            if self._hand_diag_count < 3:
+                self._hand_diag_count += 1
+                _raw_left = event.value.get("left")
+                _raw_right = event.value.get("right")
+                _logger.warning(
+                    f"🔍 [HAND_MOVE] raw left: type={type(_raw_left).__name__}, "
+                    f"len={len(_raw_left) if hasattr(_raw_left, '__len__') else 'N/A'}, "
+                    f"repr={repr(_raw_left)[:200]}"
+                )
+                _logger.warning(
+                    f"🔍 [HAND_MOVE] raw right: type={type(_raw_right).__name__}, "
+                    f"len={len(_raw_right) if hasattr(_raw_right, '__len__') else 'N/A'}, "
+                    f"repr={repr(_raw_right)[:200]}"
+                )
+
+            # Filter out invalid or placeholder (e.g. ExtType(0, b'\x00') for undefined/absent) hand data
             if left_hand_data is not None:
-                if not isinstance(left_hand_data, (list, np.ndarray)) or len(left_hand_data) != 400:
+                # Accept flat list/array of 400 floats, or nested 25x16
+                if isinstance(left_hand_data, np.ndarray):
+                    left_hand_data = left_hand_data.flatten().tolist()
+                elif isinstance(left_hand_data, list) and len(left_hand_data) > 0 and isinstance(left_hand_data[0], (list, np.ndarray)):
+                    # Nested list of 25 x 16-element sublists
+                    left_hand_data = [v for sub in left_hand_data for v in (sub if isinstance(sub, list) else sub.tolist())]
+                if not isinstance(left_hand_data, list) or len(left_hand_data) != 400:
                     left_hand_data = None
             if right_hand_data is not None:
-                if not isinstance(right_hand_data, (list, np.ndarray)) or len(right_hand_data) != 400:
+                if isinstance(right_hand_data, np.ndarray):
+                    right_hand_data = right_hand_data.flatten().tolist()
+                elif isinstance(right_hand_data, list) and len(right_hand_data) > 0 and isinstance(right_hand_data[0], (list, np.ndarray)):
+                    right_hand_data = [v for sub in right_hand_data for v in (sub if isinstance(sub, list) else sub.tolist())]
+                if not isinstance(right_hand_data, list) or len(right_hand_data) != 400:
                     right_hand_data = None
 
             # Log a one-shot confirmation the first time we get real data
