@@ -103,19 +103,23 @@ info "Docker files copied."
 # ---------------------------------------------------------------------------
 section "Installing docker-compose on PC2 (standalone, aarch64-aware)"
 
-ssh "${PC2_USER}@${PC2_IP}" "sudo -S bash" << REMOTE
-${PC2_SUDO_PASS}
+ssh "${PC2_USER}@${PC2_IP}" bash -s << REMOTE
 set -e
 ARCH=\$(uname -m)
 DEST=/usr/local/bin/docker-compose
 # Remove any stale plugin-directory binaries that confuse old Docker
-rm -f /home/unitree/.docker/cli-plugins/docker-compose \
-       /usr/local/lib/docker/cli-plugins/docker-compose 2>/dev/null || true
-# Download the correct architecture standalone binary
+rm -f /home/unitree/.docker/cli-plugins/docker-compose 2>/dev/null || true
+echo "${PC2_SUDO_PASS}" | sudo -S rm -f /usr/local/lib/docker/cli-plugins/docker-compose 2>/dev/null || true
+
+# Download the correct architecture standalone binary to /tmp
+TMP_DEST=/tmp/docker-compose
 URL="https://github.com/docker/compose/releases/latest/download/docker-compose-linux-\${ARCH}"
-echo "[INFO] Downloading docker-compose for \${ARCH} -> \${DEST}"
-curl -fsSL "\${URL}" -o "\${DEST}"
-chmod +x "\${DEST}"
+echo "[INFO] Downloading docker-compose for \${ARCH}..."
+curl -fsSL "\${URL}" -o "\${TMP_DEST}"
+chmod +x "\${TMP_DEST}"
+
+# Move to destination using sudo
+echo "${PC2_SUDO_PASS}" | sudo -S mv "\${TMP_DEST}" "\${DEST}"
 echo "[INFO] \$(\${DEST} version)"
 REMOTE
 
