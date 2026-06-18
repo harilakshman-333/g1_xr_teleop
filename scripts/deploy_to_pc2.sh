@@ -103,20 +103,20 @@ info "Docker files copied."
 # ---------------------------------------------------------------------------
 section "Installing docker-compose on PC2 (standalone, aarch64-aware)"
 
-ssh "${PC2_USER}@${PC2_IP}" \
-    "echo '${PC2_SUDO_PASS}' | sudo -S bash -s" << 'REMOTE'
+ssh "${PC2_USER}@${PC2_IP}" "sudo -S bash" << REMOTE
+${PC2_SUDO_PASS}
 set -e
-ARCH=$(uname -m)
+ARCH=\$(uname -m)
 DEST=/usr/local/bin/docker-compose
 # Remove any stale plugin-directory binaries that confuse old Docker
 rm -f /home/unitree/.docker/cli-plugins/docker-compose \
        /usr/local/lib/docker/cli-plugins/docker-compose 2>/dev/null || true
 # Download the correct architecture standalone binary
-URL="https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${ARCH}"
-echo "[INFO] Downloading docker-compose for ${ARCH} -> ${DEST}"
-curl -fsSL "${URL}" -o "${DEST}"
-chmod +x "${DEST}"
-echo "[INFO] $(docker-compose version)"
+URL="https://github.com/docker/compose/releases/latest/download/docker-compose-linux-\${ARCH}"
+echo "[INFO] Downloading docker-compose for \${ARCH} -> \${DEST}"
+curl -fsSL "\${URL}" -o "\${DEST}"
+chmod +x "\${DEST}"
+echo "[INFO] \$(\${DEST} version)"
 REMOTE
 
 COMPOSE_CMD="sudo docker-compose"
