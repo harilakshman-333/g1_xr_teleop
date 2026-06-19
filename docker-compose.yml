@@ -73,11 +73,10 @@ services:
       TASK_DESC: "${TASK_DESC:-Pick and place task}"
       TASK_STEPS: "${TASK_STEPS:-step1: approach; step2: grasp; step3: lift;}"
 
-      # -----------------------------------------------------------------------
       # Network interface for CycloneDDS (leave blank for auto-detect)
       # Set to your Ethernet interface name, e.g. eth0, enp3s0
-      # -----------------------------------------------------------------------
       NETWORK_INTERFACE: ${NETWORK_INTERFACE:-}
+      CYCLONEDDS_URI: "<CycloneDDS><Domain><General><Interfaces><NetworkInterface name='${NETWORK_INTERFACE:-eno2}'/></Interfaces></General></Domain></CycloneDDS>"
 
       # SSL cert paths (these files come from the certs/ volume below)
       XR_TELEOP_CERT: /certs/cert.pem
@@ -102,6 +101,9 @@ services:
       # Patched teleop_hand_and_arm.py — adds --auto-start flag support.
       - ./docker/host/teleop_hand_and_arm_patch.py:/opt/xr_teleoperate/teleop/teleop_hand_and_arm.py:ro
 
+      # Entrypoint script with custom command support
+      - ./docker/host/entrypoint.sh:/entrypoint.sh:ro
+
       # Optional: mount local xr_teleoperate checkout for live code editing
       # Uncomment to develop without rebuilding the image on every change.
       - ./xr_teleoperate:/opt/xr_teleoperate
@@ -122,3 +124,83 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+
+  # ---------------------------------------------------------------------------
+  # VISUALIZATION SERVICES — Real-time RViz2 monitoring of the G1 robot
+  #
+  # Three services work together:
+  #   1. g1_joint_relay  — subscribes to DDS LowState → /joint_states @ 30Hz
+  #   2. g1_robot_state  — URDF + /joint_states → /tf transforms for RViz
+  #   3. g1_rviz         — RViz2 window showing live robot model
+  #
+  # Prerequisites (run once on the Host before docker compose up):
+  #   xhost +local:docker
+  # ---------------------------------------------------------------------------
+
+  # ── 1. DDS → ROS2 Joint State Relay ────────────────────────────────────────
+  # Reads live LowState from the robot's DDS network and publishes /joint_states
+  g1_joint_relay:
+    build:
+      context: ./docker/viz
+      dockerfile: Dockerfile.viz
+    image: g1_xr_teleop/viz:latest
+    container_name: g1_teleop_joint_relay
+    network_mode: host
+    ipc: host
+    privileged: true
+    environment:
+      - NETWORK_INTERFACE=${NETWORK_INTERFACE:-}
+      - SIM=${SIM:-false}
+      - CYCLONEDDS_URI=<CycloneDDS><Domain><General><Interfaces><NetworkInterface name='${NETWORK_INTERFACE:-eno2}'/></Interfaces></General></Domain></CycloneDDS>
+    command: >
+      python3 /workspace/dds_joint_relay.py
+      ${NETWORK_INTERFACE:+--interface ${NETWORK_INTERFACE}}
+      ${SIM:+--domain 1}
+    restart: unless-stopped
+    depends_on:
+      - host
+
+  # ── 2. Robot State Publisher (URDF → /tf) ──────────────────────────────────
+  # Reads the G1 URDF and /joint_states to publish coordinate transforms
+  # that RViz needs to correctly position each link in 3D space
+  g1_robot_state:
+    image: g1_xr_teleop/viz:latest
+    container_name: g1_teleop_robot_state
+    network_mode: host
+    ipc: host
+    environment:
+      - CYCLONEDDS_URI=<CycloneDDS><Domain><General><Interfaces><NetworkInterface name='${NETWORK_INTERFACE:-eno2}'/></Interfaces></General></Domain></CycloneDDS>
+    volumes:
+      # Mount the local xr_teleoperate checkout so we can read the G1 URDF
+      - ./xr_teleoperate:/opt/xr_teleoperate:ro
+    command: ["/workspace/start_robot_state.sh"]
+    restart: unless-stopped
+    depends_on:
+      - g1_joint_relay
+
+  # ── 3. RViz2 ────────────────────────────────────────────────────────────────
+  # Opens the RViz window showing the live G1 robot model
+  # Run `xhost +local:docker` on the Host before starting
+  g1_rviz:
+    image: g1_xr_teleop/viz:latest
+    container_name: g1_teleop_rviz
+    network_mode: host
+    ipc: host
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - QT_X11_NO_MITSHM=1
+      - XAUTHORITY=${XAUTHORITY:-}
+      - CYCLONEDDS_URI=<CycloneDDS><Domain><General><Interfaces><NetworkInterface name='${NETWORK_INTERFACE:-eno2}'/></Interfaces></General></Domain></CycloneDDS>
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./xr_teleoperate:/opt/xr_teleoperate:ro
+    command: >
+      bash -c "
+      source /opt/ros/humble/setup.bash &&
+        rviz2 -d /workspace/g1_viz.rviz
+      "
+    restart: unless-stopped
+    depends_on:
+      - g1_joint_relay
+      - g1_robot_state
+

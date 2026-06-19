@@ -13,7 +13,7 @@ Deploy and run the image server container directly on the G1's PC2:
 ```bash
 ./scripts/deploy_to_pc2.sh
 ```
-*(Tip: Verify the feed by opening `https://192.168.123.164:60001` in your Quest 3 browser, bypassing the SSL warning, and clicking **Start**).*
+> **Verify:** Open `https://192.168.123.164:60001` in your Quest 3 browser, bypass the SSL warning, and click **Start**. You should see the robot's camera feed.
 
 ### 2️⃣ Launch the Teleop System
 On your Host PC terminal, bring up the teleoperation container:
@@ -21,23 +21,42 @@ On your Host PC terminal, bring up the teleoperation container:
 docker compose up
 ```
 
-### 3️⃣ Jump into VR
+### 3️⃣ Put the Robot in Debug Mode
+The robot's locomotion controller blocks direct arm commands by default. You must bypass it with the physical controller before the software can move the arms.
+
+> **The robot must be suspended in a harness before this step.**
+
+| Step | Button Combo | Result |
+|------|--------------|--------|
+| 1 | `L1 + A` | Robot goes limp (damping mode) |
+| 2 | `L2 + R2` (simultaneously) | Enters debug mode — locomotion controller suspended |
+| 3 | `L2 + A` | ✅ Robot moves to diagnostic pose → debug mode confirmed |
+| 4 | `L2 + B` | Arms return to rest |
+| 5 | `L2 + R2` again | Re-enter debug mode (required after each pose reset) |
+
+If the robot does **not** move on step 3, re-press `L2 + R2` and try again.
+
+### 4️⃣ Jump into VR
 1. Put on your **Quest 3** and open the **Meta Quest Browser**.
-2. Navigate to your Host IP: `https://192.168.123.2:8012/?ws=wss://192.168.123.2:8012`
-3. Click the **Virtual Reality** button at the bottom of the page to enter VR mode and enable hand tracking.
-4. **Align your arms** with the robot's default rest posture (elbows at ~90 degrees, hands slightly forward).
-5. In your Host PC terminal, press **`r`** to start teleoperating!
-6. When finished, press **`q`** to safely stop and return the robot to its home posture.
+2. Navigate to: `https://192.168.123.2:8012/?ws=wss://192.168.123.2:8012`
+3. Click the **Virtual Reality** button to enter VR mode and enable hand tracking.
+4. **Align your arms** with the robot's resting posture (elbows at ~90°, hands slightly forward) to prevent a jerk when starting.
+5. In your Host PC terminal, press **`r`** to begin teleoperation.
+6. When finished, press **`q`** to stop — the robot returns to its home posture over 5 seconds.
 
 ---
 
 ## 📋 First-Time Prerequisites
 
-Before starting your very first setup, please make sure:
-1. The **G1 Robot** is powered on, fully booted, and in standalone mode.
-2. The **Host PC** (running Ubuntu 22.04) is connected via Ethernet directly to the robot's network (or bridged via a router).
-3. The **Meta Quest 3** is connected to the same WiFi network as your Host PC.
-4. **Docker** and **Docker Compose** are installed on both the Host PC and the G1's PC2.
+Before starting your very first setup, make sure:
+
+| # | Requirement |
+|---|-------------|
+| 1 | G1 Robot is powered on, fully booted, and in standalone mode |
+| 2 | Host PC (Ubuntu 22.04) is connected via Ethernet to the robot's network |
+| 3 | Meta Quest 3 is on the same WiFi network as the Host PC |
+| 4 | Docker Engine 24+ and Docker Compose v2 are installed on the Host PC |
+| 5 | Docker Engine is installed on the G1's PC2 (pre-installed on EDU units) |
 
 ---
 
@@ -67,15 +86,16 @@ ping 192.168.123.164
 ```
 
 ### 3. Generate & Trust SSL Certificates
-The Meta Quest Browser requires secure connections (HTTPS/WSS) for WebXR features to work. Generate a self-signed certificate:
+The Meta Quest Browser requires HTTPS/WSS for WebXR. Generate a self-signed certificate:
 ```bash
 chmod +x scripts/gen_certs.sh
 ./scripts/gen_certs.sh
 ```
 **Trusting the certificate on your Quest 3:**
 1. Put on the headset and open the **Meta Quest Browser**.
-2. Navigate to: `https://192.168.123.2:8012/?ws=wss://192.168.123.2:8012` *(Change the IP if your Host IP is different).*
-3. Tap **Advanced** → **Proceed to <IP> (unsafe)**. This saves a security exception on the headset so it won't block you next time!
+2. Navigate to: `https://192.168.123.2:8012/?ws=wss://192.168.123.2:8012`
+   *(Adjust the IP if your Host is on a different address.)*
+3. Tap **Advanced** → **Proceed to (unsafe)**. This stores the security exception so future sessions connect without prompts.
 
 ### 4. Build the Host Container
 Finally, build the host teleop container before running the Fast Track steps above:
@@ -85,18 +105,22 @@ docker compose build
 
 ---
 
-## 🖥️ Simulation Mode (Testing Without the Robot)
+## 🖥️ Simulation Mode (Test Without the Robot)
 
-Don't have the physical robot ready? No problem! You can test the entire pipeline in simulation:
+You can test the full pipeline in simulation before touching the physical robot:
 
-1. Run [unitree_sim_isaaclab](https://github.com/unitreerobotics/unitree_sim_isaaclab) on your Host PC:
+1. Start [unitree_sim_isaaclab](https://github.com/unitreerobotics/unitree_sim_isaaclab) on your Host PC:
    ```bash
    conda activate unitree_sim_env
-   python sim_main.py --device cpu --enable_cameras --task Isaac-PickPlace-Cylinder-G129-Dex3-Joint --enable_dex3_dds --robot_type g129
+   python sim_main.py --device cpu --enable_cameras \
+     --task Isaac-PickPlace-Cylinder-G129-Dex3-Joint \
+     --enable_dex3_dds --robot_type g129
    ```
-2. In your `.env` file, change the setting to `SIM=true`.
+2. Set `SIM=true` in your `.env` file.
 3. Start the host container:
    ```bash
    docker compose up
    ```
-4. Connect the Quest 3 browser to the host IP and test VR just like you would on the real robot!
+4. Connect the Quest 3 browser as normal — you'll see the simulated robot.
+
+> **Note:** Simulation mode does not require the debug mode step (Step 3 above).

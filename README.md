@@ -221,10 +221,29 @@ You'll see the startup banner in the terminal:
 
 ## Operating Procedure
 
-### Standard teleoperation
+### Step 1 — Put the robot in debug mode
 
-1. Robot is on, PC2 image server is running (Step 5)
-2. `docker compose up` is running on Host (Step 7)
+The G1's locomotion controller runs by default and **blocks all direct joint commands**. You must suspend it with the physical controller before the teleop software can move the arms.
+
+> **The robot must be suspended in a harness before this step.**
+
+| Step | Button Combo | What Happens |
+|------|--------------|---------------|
+| 1 | `L1 + A` | Robot goes limp (damping mode) |
+| 2 | `L2 + R2` (simultaneously) | Locomotion controller suspended — debug mode active |
+| 3 | `L2 + A` | ✅ Robot moves to diagnostic pose → confirms debug mode |
+| 4 | `L2 + B` | Arms return to rest |
+| 5 | `L2 + R2` again | Re-enter debug mode (required after each pose reset) |
+
+If the robot does **not** move on step 3, re-press `L2 + R2` and try again.
+
+> **Note:** You must re-enter debug mode every time you use `L2 + A` or `L2 + B` to reset the pose, as those commands hand control back to the locomotion stack.
+
+### Step 2 — Standard teleoperation
+
+1. Robot is on, PC2 image server is running (Setup Step 5)
+2. Robot is in debug mode (see Step 1 above)
+3. `docker compose up` is running on Host (Setup Step 7)
 3. Put on Quest 3. Open Meta Quest Browser.
 4. Go to `https://192.168.123.2:8012/?ws=wss://192.168.123.2:8012`
 5. Tap **Virtual Reality** → allow all XR permissions
@@ -312,6 +331,7 @@ Before touching the physical robot, test the full pipeline in simulation:
 | Quest 3 connects but no camera image | PC2 image server not running | SSH to PC2 and check container logs |
 | IK solver returns no solution | Arms outside robot's workspace | Move arms to a more natural, central position |
 | Arm jerks on pressing `r` | Pose mismatch at start | Align your arms to robot initial pose before pressing `r` |
+| Arms don't move after pressing `r` | Robot not in debug mode | Press `L2 + R2` on the physical controller (see Operating Procedure Step 1) |
 | DDS connection failed | Wrong network interface | Set `NETWORK_INTERFACE=<iface>` in `.env` |
 | Container exits immediately | Missing certs or bad `.env` | Check `docker compose logs host` for the error |
 

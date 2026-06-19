@@ -1,0 +1,54 @@
+# =============================================================================
+# docker/viz/Dockerfile.viz
+# G1 XR Teleop - Real-time RViz2 Visualization Container
+#
+# Multi-stage build:
+#   Stage 1: copies unitree_sdk2py + cyclonedds from the already-built host image
+#   Stage 2: ROS2 Humble + RViz2 + the SDK + relay scripts
+# =============================================================================
+
+# Stage 1: source the unitree SDK from the host image
+FROM g1_xr_teleop/host:latest AS sdk_source
+
+# Stage 2: actual viz container
+FROM osrf/ros:humble-desktop
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    python3-opencv \
+    git \
+    ros-humble-joint-state-publisher \
+    ros-humble-robot-state-publisher \
+    ros-humble-xacro \
+    ros-humble-rviz2 \
+    ros-humble-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir pyzmq
+
+# Copy unitree_sdk2py + cyclonedds from the host image conda env.
+# unitree_sdk2py lives at /opt/unitree_sdk2_python
+# cyclonedds + its native bundled libs live in the conda tv env site-packages
+COPY --from=sdk_source /opt/unitree_sdk2_python /opt/unitree_sdk2_python
+COPY --from=sdk_source \
+    /opt/conda/envs/tv/lib/python3.10/site-packages/cyclonedds \
+    /usr/local/lib/python3.10/dist-packages/cyclonedds
+COPY --from=sdk_source \
+    /opt/conda/envs/tv/lib/python3.10/site-packages/cyclonedds.libs \
+    /usr/local/lib/python3.10/dist-packages/cyclonedds.libs
+
+# Register both packages on the Python path via .pth files
+RUN echo "/opt/unitree_sdk2_python" > /usr/local/lib/python3.10/dist-packages/unitree_sdk2py.pth
+
+# Workspace
+WORKDIR /workspace
+
+COPY entrypoint_viz.sh /entrypoint_viz.sh
+COPY start_robot_state.sh /workspace/start_robot_state.sh
+COPY dds_joint_relay.py /workspace/dds_joint_relay.py
+COPY g1_viz.rviz /workspace/g1_viz.rviz
+
+RUN chmod +x /entrypoint_viz.sh /workspace/start_robot_state.sh
+
+ENTRYPOINT ["/entrypoint_viz.sh"]
