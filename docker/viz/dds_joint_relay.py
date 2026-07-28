@@ -19,9 +19,15 @@ import sys
 import threading
 import time
 
+import os
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import JointState
+from sensor_msgs.msg import JointState, Image
+
+# Add teleimager paths if mounted
+for p in ["/opt/xr_teleoperate/teleop/teleimager/src", "/opt/xr_teleoperate/teleop"]:
+    if p not in sys.path and os.path.exists(p):
+        sys.path.append(p)
 
 # ── Unitree SDK ────────────────────────────────────────────────────────────────
 try:
@@ -109,11 +115,11 @@ PUBLISH_HZ = 30
 
 class DdsJointRelay(Node):
     """
-    ROS 2 node that bridges Unitree DDS LowState → /joint_states.
-    Thread-safe: the DDS callback runs in a separate thread managed by the SDK.
+    ROS 2 node that bridges Unitree DDS LowState → /joint_states
+    and optionally relays ZMQ camera frames → /camera/image_raw.
     """
 
-    def __init__(self):
+    def __init__(self, img_server_ip: str = None):
         super().__init__("g1_dds_joint_relay")
         self._lock = threading.Lock()
         self._positions = [0.0] * len(JOINT_NAMES)
@@ -123,10 +129,53 @@ class DdsJointRelay(Node):
         self._pub = self.create_publisher(JointState, "/joint_states", 10)
         self._timer = self.create_timer(1.0 / PUBLISH_HZ, self._publish_tick)
 
+        self._img_pub = self.create_publisher(Image, "/camera/image_raw", 10)
+        self._img_server_ip = img_server_ip
+        if self._img_server_ip:
+            self._cam_thread = threading.Thread(target=self._camera_loop, daemon=True)
+            self._cam_thread.start()
+
         self.get_logger().info(
             f"Subscribed to DDS topic '{TOPIC_LOWSTATE}'. "
             f"Publishing /joint_states at {PUBLISH_HZ} Hz …"
         )
+
+    def _camera_loop(self):
+        try:
+            from teleimager.image_client import ImageClient
+        except ImportError:
+            self.get_logger().warn("[CameraRelay] teleimager module not found. Camera relay disabled.")
+            return
+
+        self.get_logger().info(f"[CameraRelay] Connecting to ZMQ image server at {self._img_server_ip}...")
+        try:
+            img_client = ImageClient(host=self._img_server_ip, request_bgr=True)
+        except Exception as e:
+            self.get_logger().error(f"[CameraRelay] Failed to start ImageClient: {e}")
+            return
+
+        self.get_logger().info("[CameraRelay] Connected! Publishing frames to /camera/image_raw")
+        while rclpy.ok():
+            try:
+                head_img, _, _ = img_client.get_image()
+                if head_img is not None and getattr(head_img, "size", 0) > 0:
+                    height, width = head_img.shape[:2]
+                    channels = head_img.shape[2] if len(head_img.shape) > 2 else 1
+
+                    msg = Image()
+                    msg.header.stamp = self.get_clock().now().to_msg()
+                    msg.header.frame_id = "d435_link"
+                    msg.height = height
+                    msg.width = width
+                    msg.encoding = "bgr8" if channels == 3 else "mono8"
+                    msg.is_bigendian = False
+                    msg.step = width * channels
+                    msg.data = head_img.tobytes()
+
+                    self._img_pub.publish(msg)
+            except Exception:
+                pass
+            time.sleep(0.033)
 
     # ── DDS callback (called by SDK thread) ───────────────────────────────────
     def on_lowstate(self, msg: LowState_):
@@ -184,6 +233,11 @@ def main():
         type=int, default=0,
         help="DDS domain ID (0=real robot, 1=simulation). Default: 0"
     )
+    parser.add_argument(
+        "--img-server-ip",
+        type=str, default=None,
+        help="IP address of PC2 image server (e.g. 192.168.123.164) to relay camera frames to RViz."
+    )
     args, ros_args = parser.parse_known_args()
 
     # Initialise the Unitree DDS channel factory
@@ -192,7 +246,7 @@ def main():
 
     # Initialise ROS 2
     rclpy.init(args=ros_args or None)
-    node = DdsJointRelay()
+    node = DdsJointRelay(img_server_ip=args.img_server_ip)
 
     # Subscribe to LowState
     sub = ChannelSubscriber(TOPIC_LOWSTATE, LowState_)

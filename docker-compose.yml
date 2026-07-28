@@ -151,13 +151,16 @@ services:
     environment:
       - NETWORK_INTERFACE=${NETWORK_INTERFACE:-}
       - SIM=${SIM:-false}
+      - IMG_SERVER_IP=${IMG_SERVER_IP:-192.168.123.164}
       - CYCLONEDDS_URI=<CycloneDDS><Domain><General><Interfaces><NetworkInterface name='${NETWORK_INTERFACE:-eno2}'/></Interfaces></General></Domain></CycloneDDS>
+    volumes:
+      - ./xr_teleoperate:/opt/xr_teleoperate:ro
     command: >
       bash -c "
       if [ \"$${SIM}\" = \"true\" ]; then
-        python3 /workspace/dds_joint_relay.py --domain 1 $${NETWORK_INTERFACE:+--interface \"$${NETWORK_INTERFACE}\"};
+        python3 /workspace/dds_joint_relay.py --domain 1 $${NETWORK_INTERFACE:+--interface \"$${NETWORK_INTERFACE}\"} --img-server-ip \"$${IMG_SERVER_IP}\";
       else
-        python3 /workspace/dds_joint_relay.py --domain 0 $${NETWORK_INTERFACE:+--interface \"$${NETWORK_INTERFACE}\"};
+        python3 /workspace/dds_joint_relay.py --domain 0 $${NETWORK_INTERFACE:+--interface \"$${NETWORK_INTERFACE}\"} --img-server-ip \"$${IMG_SERVER_IP}\";
       fi
       "
     restart: unless-stopped
