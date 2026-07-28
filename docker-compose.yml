@@ -154,7 +154,7 @@ services:
       - IMG_SERVER_IP=${IMG_SERVER_IP:-192.168.123.164}
       - CYCLONEDDS_URI=<CycloneDDS><Domain><General><Interfaces><NetworkInterface name='${NETWORK_INTERFACE:-eno2}'/></Interfaces></General></Domain></CycloneDDS>
     volumes:
-      - ./xr_teleoperate:/opt/xr_teleoperate:ro
+      - ./xr_teleoperate:/opt/xr_teleoperate
     command: >
       bash -c "
       if [ \"$${SIM}\" = \"true\" ]; then
