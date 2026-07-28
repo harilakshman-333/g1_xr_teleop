@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir pyzmq
+RUN pip3 install --no-cache-dir pyzmq logging_mp pyyaml
 
 # Copy unitree_sdk2py + cyclonedds from the host image conda env.
 # unitree_sdk2py lives at /opt/unitree_sdk2_python
