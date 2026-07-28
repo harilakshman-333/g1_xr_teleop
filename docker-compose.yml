@@ -201,6 +201,7 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./xr_teleoperate:/opt/xr_teleoperate:ro
+      - ./docker/viz/g1_viz.rviz:/workspace/g1_viz.rviz:ro
     command: >
       bash -c "
       source /opt/ros/humble/setup.bash &&
