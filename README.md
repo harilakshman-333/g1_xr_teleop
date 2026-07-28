@@ -181,11 +181,12 @@ chmod +x scripts/deploy_to_pc2.sh
 ./scripts/deploy_to_pc2.sh
 ```
 
-Verify the D435i camera is working by opening in the Quest 3 browser:
-```
-https://192.168.123.164:60001
-```
-Accept the certificate warning → click Start. If you see the robot's camera feed, the image server is working.
+Verify the D435i camera is working (optional WebRTC preview):
+
+By default, the direct WebRTC endpoint on port `60001` is disabled in `configs/cam_config_server.yaml` to prevent network routing issues. If you wish to test it directly:
+1. Set `enable_webrtc: true` in `configs/cam_config_server.yaml` and redeploy.
+2. Open `https://192.168.123.164:60001` in your browser (on the same subnet).
+3. Accept the certificate warning → click Start. If you see the robot's camera feed, the image server is working.
 
 ### Step 6 — Trust the certificate on the Quest 3
 
@@ -193,8 +194,9 @@ This step unlocks the WebSocket connection from the headset to the Host:
 
 1. Put on the Quest 3
 2. Open **Meta Quest Browser**
-3. Navigate to: `https://192.168.123.2:8012/?ws=wss://192.168.123.2:8012`
-4. Tap **Advanced** → **Proceed to 192.168.123.2 (unsafe)**
+3. Navigate to: `https://<HOST_IP>:8012/?ws=wss://<HOST_IP>:8012`
+   *(Where `<HOST_IP>` is your Host PC's IP address on the network shared with the Quest, e.g. `10.47.132.246` or `192.168.123.2`.)*
+4. Tap **Advanced** → **Proceed to <HOST_IP> (unsafe)**
 5. The page will attempt to connect — this is enough to store the trust decision
 
 You only need to do this **once** per certificate (re-run `gen_certs.sh` if the cert expires or the IP changes).
@@ -245,7 +247,8 @@ If the robot does **not** move on step 3, re-press `L2 + R2` and try again.
 2. Robot is in debug mode (see Step 1 above)
 3. `docker compose up` is running on Host (Setup Step 7)
 3. Put on Quest 3. Open Meta Quest Browser.
-4. Go to `https://192.168.123.2:8012/?ws=wss://192.168.123.2:8012`
+4. Go to `https://<HOST_IP>:8012/?ws=wss://<HOST_IP>:8012`
+   *(Where `<HOST_IP>` is your Host PC's IP address on the network shared with the Quest, e.g. `10.47.132.246` or `192.168.123.2`.)*
 5. Tap **Virtual Reality** → allow all XR permissions
 6. You'll see the robot's D435i camera feed in the headset
 7. **Align your arms** to match the robot's resting pose before starting (arms slightly forward, elbows ~90°). This prevents a jerk at start.

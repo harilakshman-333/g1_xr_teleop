@@ -38,6 +38,9 @@ head_camera:
   # WebRTC: enables a direct HTTPS stream from PC2 to the Quest 3 browser.
   # Useful for verifying camera feed before teleoperation (visit port 60001).
   # Set to false if you don't need the direct preview.
+  # WebRTC disabled: the Quest cannot directly reach PC2 (192.168.123.164:60001)
+  # from the Wi-Fi network. Use ZMQ instead — the host relays frames to the
+  # Quest over the already-working WebSocket connection on port 8012.
   enable_webrtc: false
   webrtc_port: 60001
 

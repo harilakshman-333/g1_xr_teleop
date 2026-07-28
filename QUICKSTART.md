@@ -13,7 +13,8 @@ Deploy and run the image server container directly on the G1's PC2:
 ```bash
 ./scripts/deploy_to_pc2.sh
 ```
-> **Verify:** Open `https://192.168.123.164:60001` in your Quest 3 browser, bypass the SSL warning, and click **Start**. You should see the robot's camera feed.
+> [!NOTE]
+> Direct camera verification via `https://192.168.123.164:60001` is disabled by default in `configs/cam_config_server.yaml` (to prevent routing issues over Wi-Fi). To enable it, set `enable_webrtc: true` in the config, redeploy, and visit the link. Otherwise, camera frames are routed over ZMQ through the Host PC to the VR headset.
 
 ### 2️⃣ Launch the Teleop System
 On your Host PC terminal, bring up the teleoperation container:
@@ -38,7 +39,8 @@ If the robot does **not** move on step 3, re-press `L2 + R2` and try again.
 
 ### 4️⃣ Jump into VR
 1. Put on your **Quest 3** and open the **Meta Quest Browser**.
-2. Navigate to: `https://192.168.123.2:8012/?ws=wss://192.168.123.2:8012`
+2. Navigate to: `https://<HOST_IP>:8012/?ws=wss://<HOST_IP>:8012`
+   *(Where `<HOST_IP>` is your Host PC's IP address on the network shared with the Quest. If connected via a shared Wi-Fi network, use the Host's Wi-Fi IP (e.g. `10.47.132.246`). If using a bridged router, use the static robot subnet IP `192.168.123.2`.)*
 3. Click the **Virtual Reality** button to enter VR mode and enable hand tracking.
 4. **Align your arms** with the robot's resting posture (elbows at ~90°, hands slightly forward) to prevent a jerk when starting.
 5. In your Host PC terminal, press **`r`** to begin teleoperation.
@@ -93,8 +95,8 @@ chmod +x scripts/gen_certs.sh
 ```
 **Trusting the certificate on your Quest 3:**
 1. Put on the headset and open the **Meta Quest Browser**.
-2. Navigate to: `https://192.168.123.2:8012/?ws=wss://192.168.123.2:8012`
-   *(Adjust the IP if your Host is on a different address.)*
+2. Navigate to: `https://<HOST_IP>:8012/?ws=wss://<HOST_IP>:8012`
+   *(Where `<HOST_IP>` is your Host PC's IP address on the network shared with the Quest, e.g. `10.47.132.246` or `192.168.123.2`.)*
 3. Tap **Advanced** → **Proceed to (unsafe)**. This stores the security exception so future sessions connect without prompts.
 
 ### 4. Build the Host Container
