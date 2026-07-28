@@ -45,35 +45,78 @@ RECORD_TOGGLE  = False  # Toggle recording state
 # Axes convention (robot standing upright, facing forward / +X):
 #   X → forward (+) / backward (-)   Y → left (+) / right (-)   Z → up (+)
 #
+# G1 arm reach from shoulder to end-effector ≈ 0.55 m.
 # Tune these to match your physical setup and safety requirements.
 # ---------------------------------------------------------------------------
+import numpy as _np_ws
+
 WS_LIMITS = {
-    # Forward / backward reach  (negative X = behind the robot's torso)
-    "x_min":  0.10,   # arm must stay in front of the robot's chest
-    "x_max":  0.75,   # max forward reach
+    # Forward / backward reach.
+    # x_min = 0.10  keeps hands in FRONT of the chest; arms cannot go behind body.
+    "x_min":  0.10,   # arms must stay in front of the robot's torso
+    "x_max":  0.65,   # max safe forward reach (arm fully extended ~0.65 m from base)
     # Left / right reach
-    "y_min": -0.60,   # max reach to the right
-    "y_max":  0.60,   # max reach to the left
-    # Up / down reach  (Z=0 is the robot's waist/base)
-    "z_min": -0.20,   # arms may drop slightly below the waist
-    "z_max":  0.60,   # arms must stay below the shoulder-height ceiling
+    "y_min": -0.55,   # max reach to the right  (right arm)
+    "y_max":  0.55,   # max reach to the left   (left arm)
+    # Up / down reach  (pelvis ≈ Z=0, shoulder ≈ Z=0.40)
+    "z_min": -0.10,   # hands must stay above the hips
+    "z_max":  0.55,   # hands must stay below the shoulders
 }
 
-def clamp_wrist_pose(pose: 'np.ndarray') -> 'np.ndarray':
+# Maximum spherical reach from shoulder origin (metres).
+# Prevents the IK from trying to reach beyond the physical arm length.
+WS_MAX_REACH = 0.55
+
+# Minimum lateral separation between each hand and the body centre-line.
+# Left  hand: Y must be ≥ +LEFT_Y_MIN   (positive = left side)
+# Right hand: Y must be ≤ -RIGHT_Y_MIN  (negative = right side)
+# This stops arms crossing through the torso or colliding with it.
+LEFT_Y_MIN  =  0.05
+RIGHT_Y_MAX = -0.05
+
+# Maximum joint-angle change per control step (rad).
+# Caps sudden IK branch-switches that would snap joints to extreme angles.
+MAX_JOINT_DELTA = 0.08   # ≈ 4.6° per step at 30 Hz
+
+
+def _clamp_reach(pos: '_np_ws.ndarray', max_reach: float) -> '_np_ws.ndarray':
+    """Clamp a 3-D position vector to a sphere of radius *max_reach*."""
+    dist = _np_ws.linalg.norm(pos)
+    if dist > max_reach:
+        return pos * (max_reach / dist)
+    return pos
+
+
+def clamp_wrist_pose(pose: 'np.ndarray', is_left: bool = True) -> 'np.ndarray':
     """
-    Clamp the translational component of a 4x4 SE3 wrist target pose so that
-    the end-effector stays within WS_LIMITS.  The rotation block is preserved.
+    Apply layered safety clamping to a 4x4 SE3 wrist target pose:
+      1. Box clamp to WS_LIMITS (no behind-body, no extreme reach).
+      2. Per-arm lateral separation (left arm stays left, right arm stays right).
+      3. Spherical reach cap so the IK target is always reachable.
+    The rotation block is preserved unchanged.
 
     Args:
-        pose: (4, 4) numpy array — SE3 transform from robot base to wrist target.
+        pose:    (4, 4) numpy array — SE3 transform from robot base to wrist target.
+        is_left: True for the left arm, False for the right arm.
     Returns:
-        A copy of ``pose`` with translation clamped to the workspace box.
+        A copy of *pose* with translation clamped to the safe workspace.
     """
-    import numpy as _np
     clamped = pose.copy()
-    clamped[0, 3] = _np.clip(pose[0, 3], WS_LIMITS["x_min"], WS_LIMITS["x_max"])
-    clamped[1, 3] = _np.clip(pose[1, 3], WS_LIMITS["y_min"], WS_LIMITS["y_max"])
-    clamped[2, 3] = _np.clip(pose[2, 3], WS_LIMITS["z_min"], WS_LIMITS["z_max"])
+
+    # ── 1. Box clamp ──────────────────────────────────────────────────────────
+    clamped[0, 3] = _np_ws.clip(pose[0, 3], WS_LIMITS["x_min"], WS_LIMITS["x_max"])
+    clamped[1, 3] = _np_ws.clip(pose[1, 3], WS_LIMITS["y_min"], WS_LIMITS["y_max"])
+    clamped[2, 3] = _np_ws.clip(pose[2, 3], WS_LIMITS["z_min"], WS_LIMITS["z_max"])
+
+    # ── 2. Per-arm lateral separation (prevents crossing through the torso) ──
+    if is_left:
+        clamped[1, 3] = max(clamped[1, 3], LEFT_Y_MIN)
+    else:
+        clamped[1, 3] = min(clamped[1, 3], RIGHT_Y_MAX)
+
+    # ── 3. Spherical reach cap ────────────────────────────────────────────────
+    clamped[:3, 3] = _clamp_reach(clamped[:3, 3], WS_MAX_REACH)
+
     return clamped
 #  -------        ---------                -----------                -----------            ---------
 #   state          [Ready]      ==>        [Recording]     ==>         [AutoSave]     -->     [Ready]
@@ -318,6 +361,7 @@ if __name__ == '__main__':
         arm_ctrl.speed_gradual_max()
         # main loop. robot start to follow VR user's motion
         _dbg_iter = 0
+        _prev_sol_q = None  # for joint slew-rate limiter
         while not STOP:
             start_time = time.time()
             # get image
@@ -388,16 +432,28 @@ if __name__ == '__main__':
             current_lr_arm_dq = arm_ctrl.get_current_dual_arm_dq()
 
             # Clamp wrist target poses to the configured workspace boundaries
-            # before passing them to the IK solver, preventing the robot from
-            # trying to reach behind its body or into unsafe positions.
-            left_wrist_clamped  = clamp_wrist_pose(tele_data.left_wrist_pose)
-            right_wrist_clamped = clamp_wrist_pose(tele_data.right_wrist_pose)
+            # before passing them to the IK solver.  is_left=True/False enforces
+            # per-arm lateral separation so neither hand can cross the body centreline.
+            left_wrist_clamped  = clamp_wrist_pose(tele_data.left_wrist_pose,  is_left=True)
+            right_wrist_clamped = clamp_wrist_pose(tele_data.right_wrist_pose, is_left=False)
 
             # solve ik using motor data and wrist pose, then use ik results to control arms.
             time_ik_start = time.time()
             sol_q, sol_tauff  = arm_ik.solve_ik(left_wrist_clamped, right_wrist_clamped, current_lr_arm_q, current_lr_arm_dq)
             time_ik_end = time.time()
             logger_mp.debug(f"ik:\t{round(time_ik_end - time_ik_start, 6)}")
+
+            # ── Joint slew-rate limiter ────────────────────────────────────────
+            # Cap the per-step joint angle change to MAX_JOINT_DELTA so that IK
+            # branch-switches (solver flipping to a different valid configuration)
+            # don't snap joints to extreme angles in a single frame.
+            import numpy as _np_slew
+            if _prev_sol_q is not None:
+                delta = sol_q - _prev_sol_q
+                clipped_delta = _np_slew.clip(delta, -MAX_JOINT_DELTA, MAX_JOINT_DELTA)
+                sol_q = _prev_sol_q + clipped_delta
+            _prev_sol_q = sol_q.copy()
+
             arm_ctrl.ctrl_dual_arm(sol_q, sol_tauff)
             if _dbg_iter % 90 == 0:
                 logger_mp.warning(f'[DBG#{_dbg_iter}] sol_q={sol_q.round(3)}')
