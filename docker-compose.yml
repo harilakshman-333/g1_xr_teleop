@@ -153,9 +153,13 @@ services:
       - SIM=${SIM:-false}
       - CYCLONEDDS_URI=<CycloneDDS><Domain><General><Interfaces><NetworkInterface name='${NETWORK_INTERFACE:-eno2}'/></Interfaces></General></Domain></CycloneDDS>
     command: >
-      python3 /workspace/dds_joint_relay.py
-      ${NETWORK_INTERFACE:+--interface ${NETWORK_INTERFACE}}
-      ${SIM:+--domain 1}
+      bash -c "
+      if [ \"$${SIM}\" = \"true\" ]; then
+        python3 /workspace/dds_joint_relay.py --domain 1 $${NETWORK_INTERFACE:+--interface \"$${NETWORK_INTERFACE}\"};
+      else
+        python3 /workspace/dds_joint_relay.py --domain 0 $${NETWORK_INTERFACE:+--interface \"$${NETWORK_INTERFACE}\"};
+      fi
+      "
     restart: unless-stopped
     depends_on:
       - host
