@@ -104,6 +104,7 @@ class TeleVuer:
             elif self.zmq:
                 self.img2display_shm = shared_memory.SharedMemory(create=True, size=np.prod(self.img_shape) * np.uint8().itemsize)
                 self.img2display = np.ndarray(self.img_shape, dtype=np.uint8, buffer=self.img2display_shm.buf)
+                self.img2display_lock = threading.Lock()  # guards torn-reads between writer thread and Vuer render loop
                 self.latest_frame = None
                 self.new_frame_event = threading.Event()
                 self.stop_writer_event = threading.Event()
@@ -118,6 +119,7 @@ class TeleVuer:
             elif self.zmq:
                 self.img2display_shm = shared_memory.SharedMemory(create=True, size=np.prod(self.img_shape) * np.uint8().itemsize)
                 self.img2display = np.ndarray(self.img_shape, dtype=np.uint8, buffer=self.img2display_shm.buf)
+                self.img2display_lock = threading.Lock()  # guards torn-reads between writer thread and Vuer render loop
                 self.latest_frame = None
                 self.new_frame_event = threading.Event()
                 self.stop_writer_event = threading.Event()
@@ -195,7 +197,8 @@ class TeleVuer:
                 continue
             latest_frame = self.latest_frame
             latest_frame = cv2.cvtColor(latest_frame, cv2.COLOR_BGR2RGB)
-            self.img2display[:] = latest_frame
+            with self.img2display_lock:
+                self.img2display[:] = latest_frame
     
     def render_to_xr(self, image):
         if self.webrtc or self.display_mode == "pass-through":
@@ -497,10 +500,12 @@ class TeleVuer:
             )
 
         while True:
+            with self.img2display_lock:
+                frame = self.img2display.copy()
             session.upsert(
                 [
                     ImageBackground(
-                        self.img2display,
+                        frame,
                         aspect=self.aspect_ratio,
                         height=1,
                         distanceToCamera=1,
@@ -511,7 +516,7 @@ class TeleVuer:
                         interpolate=True,
                     ),
                     ImageBackground(
-                        self.img2display,
+                        frame,
                         aspect=self.aspect_ratio,
                         height=1,
                         distanceToCamera=1,
@@ -522,7 +527,7 @@ class TeleVuer:
                         interpolate=True,
                     ),
                     ImageBackground(
-                        self.img2display,
+                        frame,
                         aspect=self.aspect_ratio,
                         height=1,
                         distanceToCamera=1,
@@ -698,10 +703,12 @@ class TeleVuer:
             )
 
         while True:
+            with self.img2display_lock:
+                frame = self.img2display.copy()
             session.upsert(
                 [
                     ImageBackground(
-                        self.img2display,
+                        frame,
                         aspect=self.aspect_ratio,
                         height=0.75,
                         distanceToCamera=2,
@@ -712,7 +719,7 @@ class TeleVuer:
                         interpolate=True,
                     ),
                     ImageBackground(
-                        self.img2display,
+                        frame,
                         aspect=self.aspect_ratio,
                         height=0.75,
                         distanceToCamera=2,
@@ -723,7 +730,7 @@ class TeleVuer:
                         interpolate=True,
                     ),
                     ImageBackground(
-                        self.img2display,
+                        frame,
                         aspect=self.aspect_ratio,
                         height=0.75,
                         distanceToCamera=2,
