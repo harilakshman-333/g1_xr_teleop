@@ -21,6 +21,7 @@ from teleop.utils.episode_writer import EpisodeWriter
 from teleop.utils.ipc import IPC_Server
 from teleop.utils.motion_switcher import MotionSwitcher, LocoClientWrapper
 from sshkeyboard import listen_keyboard, stop_listening
+from collision_guard import CollisionGuard
 
 # for simulation
 from unitree_sdk2py.core.channel import ChannelPublisher
@@ -59,7 +60,7 @@ WS_LIMITS = {
     "y_min": -0.55,   # max reach to the right  (right arm)
     "y_max":  0.55,   # max reach to the left   (left arm)
     # Up / down reach  (pelvis ≈ Z=0, shoulder ≈ Z=0.40)
-    "z_min": -0.10,   # hands must stay above the hips
+    "z_min":  0.02,   # hands must stay strictly above hip/thigh level
     "z_max":  0.55,   # hands must stay below the shoulders
 }
 
@@ -71,12 +72,43 @@ WS_MAX_REACH = 0.55
 # Left  hand: Y must be ≥ +LEFT_Y_MIN   (positive = left side)
 # Right hand: Y must be ≤ -RIGHT_Y_MIN  (negative = right side)
 # This stops arms crossing through the torso or colliding with it.
-LEFT_Y_MIN  =  0.05
-RIGHT_Y_MAX = -0.05
+LEFT_Y_MIN  =  0.10
+RIGHT_Y_MAX = -0.10
 
 # Maximum joint-angle change per control step (rad).
 # Caps sudden IK branch-switches that would snap joints to extreme angles.
 MAX_JOINT_DELTA = 0.08   # ≈ 4.6° per step at 30 Hz
+
+
+class WristPoseFilter:
+    """
+    Exponential Moving Average (EMA) filter for SE3 wrist pose transforms.
+    Smooths position and orientation to eliminate Quest 3 hand tracking noise (±3mm jitter).
+    """
+    def __init__(self, alpha: float = 0.35):
+        self.alpha = alpha
+        self.prev_pos = None
+        self.prev_rot = None
+
+    def filter(self, pose: '_np_ws.ndarray') -> '_np_ws.ndarray':
+        if pose is None:
+            return pose
+        pos = pose[:3, 3]
+        rot = pose[:3, :3]
+        if self.prev_pos is None:
+            self.prev_pos = pos.copy()
+            self.prev_rot = rot.copy()
+            return pose.copy()
+
+        smooth_pos = self.alpha * pos + (1.0 - self.alpha) * self.prev_pos
+        smooth_rot = self.alpha * rot + (1.0 - self.alpha) * self.prev_rot
+        self.prev_pos = smooth_pos.copy()
+        self.prev_rot = smooth_rot.copy()
+
+        out_pose = pose.copy()
+        out_pose[:3, 3] = smooth_pos
+        out_pose[:3, :3] = smooth_rot
+        return out_pose
 
 
 def _clamp_reach(pos: '_np_ws.ndarray', max_reach: float) -> '_np_ws.ndarray':
@@ -198,10 +230,21 @@ if __name__ == '__main__':
                                                       daemon=True)
             listen_keyboard_thread.start()
 
-        # image client
+        # image client — retry get_cam_config() to tolerate PC2 still starting up
         img_client = ImageClient(host=args.img_server_ip, request_bgr=True)
-        camera_config = img_client.get_cam_config()
-        logger_mp.debug(f"Camera config: {camera_config}")
+        camera_config = None
+        for _cfg_attempt in range(10):
+            try:
+                camera_config = img_client.get_cam_config()
+                if camera_config and 'head_camera' in camera_config:
+                    break
+            except Exception as _cfg_e:
+                logger_mp.warning(f"[camera_config] attempt {_cfg_attempt+1}/10 failed: {_cfg_e}")
+            logger_mp.info(f"[camera_config] PC2 not ready yet, retrying in 2 s…")
+            time.sleep(2.0)
+        if camera_config is None or 'head_camera' not in camera_config:
+            raise RuntimeError("[camera_config] Could not fetch camera config from PC2 after 10 attempts. Is deploy_to_pc2.sh running?")
+        logger_mp.info(f"Camera config: {camera_config}")
         xr_need_local_img = not (args.display_mode == 'pass-through' or camera_config['head_camera']['enable_webrtc'])
 
         # televuer_wrapper: obtain hand pose data from the XR device and transmit the robot's head camera image to the XR device.
@@ -232,6 +275,15 @@ if __name__ == '__main__':
                                      webrtc=camera_config['head_camera']['enable_webrtc'],
                                      webrtc_url=webrtc_url_str,
                                      )
+
+        # ── Pre-warm: push a neutral grey frame into the VR buffer so the Quest
+        # ── never sees an all-black display when it connects before the first
+        # ── real camera frame arrives from ZMQ (which can take 1-3 s to start).
+        if xr_need_local_img and camera_config['head_camera']['enable_zmq']:
+            _h, _w = camera_config['head_camera']['image_shape']
+            _grey = _np_ws.full((_h, _w, 3), 64, dtype=_np_ws.uint8)  # dark grey
+            tv_wrapper.render_to_xr(_grey)
+            logger_mp.info("[VR] Pre-warmed shared memory buffer with grey frame.")
         
         # motion mode (G1: Regular mode R1+X, not Running mode R2+A)
         if args.motion:
@@ -246,15 +298,20 @@ if __name__ == '__main__':
         if args.arm == "G1_29":
             arm_ik = G1_29_ArmIK()
             arm_ctrl = G1_29_ArmController(motion_mode=args.motion, simulation_mode=args.sim)
+            # Collision guard disabled to prevent post-IK solver fighting
+            _collision_guard = None
         elif args.arm == "G1_23":
             arm_ik = G1_23_ArmIK()
             arm_ctrl = G1_23_ArmController(motion_mode=args.motion, simulation_mode=args.sim)
+            _collision_guard = None  # collision guard only for G1_29
         elif args.arm == "H1_2":
             arm_ik = H1_2_ArmIK()
             arm_ctrl = H1_2_ArmController(motion_mode=args.motion, simulation_mode=args.sim)
+            _collision_guard = None
         elif args.arm == "H1":
             arm_ik = H1_ArmIK()
             arm_ctrl = H1_ArmController(simulation_mode=args.sim)
+            _collision_guard = None
 
         # end-effector
         if args.ee == "dex3":
@@ -351,26 +408,41 @@ if __name__ == '__main__':
         if args.auto_start:
             logger_mp.info("🚀  AUTO-START enabled — beginning teleoperation immediately.")
             START = True
+        _last_good_frame = None   # track the most recent valid BGR frame
         while not START and not STOP: # wait for start or stop signal.
             time.sleep(0.033)
             if camera_config['head_camera']['enable_zmq'] and xr_need_local_img:
                 head_img = img_client.get_head_frame()
                 if head_img.bgr is not None:
+                    _last_good_frame = head_img.bgr
                     tv_wrapper.render_to_xr(head_img.bgr)
+                elif _last_good_frame is not None:
+                    # ZMQ returned stale/None — re-push the last good frame so the
+                    # Quest doesn't see a frozen black display on brief ZMQ gaps.
+                    tv_wrapper.render_to_xr(_last_good_frame)
 
         logger_mp.info("---------------------🚀start Tracking🚀-------------------------")
         arm_ctrl.speed_gradual_max()
         # main loop. robot start to follow VR user's motion
         _dbg_iter = 0
         _prev_sol_q = None  # for joint slew-rate limiter
+        _left_wrist_filter = WristPoseFilter(alpha=0.35)
+        _right_wrist_filter = WristPoseFilter(alpha=0.35)
+        if hasattr(arm_ik, '_ik_initialized'):
+            arm_ik._ik_initialized = False
         while not STOP:
             start_time = time.time()
             # get image
             if camera_config['head_camera']['enable_zmq']:
                 if args.record or xr_need_local_img:
                     head_img = img_client.get_head_frame()
-                if xr_need_local_img and head_img.bgr is not None:
-                    tv_wrapper.render_to_xr(head_img.bgr)
+                if xr_need_local_img:
+                    if head_img.bgr is not None:
+                        _last_good_frame = head_img.bgr
+                        tv_wrapper.render_to_xr(head_img.bgr)
+                    elif _last_good_frame is not None:
+                        # Re-push last good frame on brief ZMQ stalls
+                        tv_wrapper.render_to_xr(_last_good_frame)
             if camera_config['left_wrist_camera']['enable_zmq']:
                 if args.record:
                     left_wrist_img = img_client.get_left_wrist_frame()
@@ -432,11 +504,15 @@ if __name__ == '__main__':
             current_lr_arm_q  = arm_ctrl.get_current_dual_arm_q()
             current_lr_arm_dq = arm_ctrl.get_current_dual_arm_dq()
 
+            # Smooth raw VR wrist poses using EMA filter to remove Quest 3 tracking noise
+            left_wrist_smooth  = _left_wrist_filter.filter(tele_data.left_wrist_pose)
+            right_wrist_smooth = _right_wrist_filter.filter(tele_data.right_wrist_pose)
+
             # Clamp wrist target poses to the configured workspace boundaries
             # before passing them to the IK solver.  is_left=True/False enforces
             # per-arm lateral separation so neither hand can cross the body centreline.
-            left_wrist_clamped  = clamp_wrist_pose(tele_data.left_wrist_pose,  is_left=True)
-            right_wrist_clamped = clamp_wrist_pose(tele_data.right_wrist_pose, is_left=False)
+            left_wrist_clamped  = clamp_wrist_pose(left_wrist_smooth,  is_left=True)
+            right_wrist_clamped = clamp_wrist_pose(right_wrist_smooth, is_left=False)
 
             # solve ik using motor data and wrist pose, then use ik results to control arms.
             time_ik_start = time.time()
@@ -444,15 +520,23 @@ if __name__ == '__main__':
             time_ik_end = time.time()
             logger_mp.debug(f"ik:\t{round(time_ik_end - time_ik_start, 6)}")
 
+            # ── Collision guard (Pinocchio + HPP-FCL) ──────────────────────────
+            # Check candidate joint configuration against actual URDF collision
+            # meshes BEFORE slew-limiting. If any arm link is close to the body,
+            # apply Jacobian push-out correction.
+            if _collision_guard is not None:
+                _prev_safe = _prev_sol_q if _prev_sol_q is not None else sol_q
+                _is_safe, sol_q = _collision_guard.check_and_correct(sol_q, _prev_safe)
+
             # ── Joint slew-rate limiter ────────────────────────────────────────
             # Cap the per-step joint angle change to MAX_JOINT_DELTA so that IK
-            # branch-switches (solver flipping to a different valid configuration)
-            # don't snap joints to extreme angles in a single frame.
+            # branch-switches or collision push-outs transition smoothly without jerking.
             import numpy as _np_slew
             if _prev_sol_q is not None:
                 delta = sol_q - _prev_sol_q
                 clipped_delta = _np_slew.clip(delta, -MAX_JOINT_DELTA, MAX_JOINT_DELTA)
                 sol_q = _prev_sol_q + clipped_delta
+
             _prev_sol_q = sol_q.copy()
 
             arm_ctrl.ctrl_dual_arm(sol_q, sol_tauff)
