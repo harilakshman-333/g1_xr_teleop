@@ -38,13 +38,31 @@ The robot's locomotion controller blocks direct arm commands by default. You mus
 If the robot does **not** move on step 3, re-press `L2 + R2` and try again.
 
 ### 4️⃣ Jump into VR
-1. Put on your **Quest 3** and open the **Meta Quest Browser**.
-2. Navigate to: `https://<HOST_IP>:8012/?ws=wss://<HOST_IP>:8012`
-   *(Where `<HOST_IP>` is your Host PC's IP address on the network shared with the Quest. If connected via a shared Wi-Fi network, use the Host's Wi-Fi IP (e.g. `10.47.132.246`). If using a bridged router, use the static robot subnet IP `192.168.123.2`.)*
-3. Click the **Virtual Reality** button to enter VR mode and enable hand tracking.
+
+> [!IMPORTANT]
+> **Do these two sub-steps in order, every time the cert changes or the Quest browser cache is cleared.**
+
+**4a — Pre-trust the certificate (30 seconds, one-off per cert)**
+1. Put on your Quest 3 and open **Meta Quest Browser**.
+2. Navigate to: `https://10.47.132.246:8012`
+   *(Replace `10.47.132.246` with your Host PC's Wi-Fi IP. If you get a blank page or connection refused, that's fine — you just need the browser to show the cert warning.)*
+3. Tap **Advanced** → **Proceed to 10.47.132.246 (unsafe)**.
+   This stores the security exception so the Vuer WebSocket can connect.
+
+**4b — Enter VR**
+1. In the same Quest browser, navigate to:
+   ```
+   https://vuer.ai?ws=wss://10.47.132.246:8012&grid=False
+   ```
+   *(Replace `10.47.132.246` with your Host PC's Wi-Fi IP.)*
+2. You should see the Vuer interface load. Click the **Enter VR** (🥽) button.
+3. The passthrough view will activate. In ego mode, the robot's camera feed appears as a small overlay in the centre of your vision.
 4. **Align your arms** with the robot's resting posture (elbows at ~90°, hands slightly forward) to prevent a jerk when starting.
 5. In your Host PC terminal, press **`r`** to begin teleoperation.
 6. When finished, press **`q`** to stop — the robot returns to its home posture over 5 seconds.
+
+> [!TIP]
+> **If the camera overlay disappears mid-session:** Press the Quest browser's back/forward button to reload the page, then tap **Enter VR** again. The WebSocket will reconnect automatically without restarting docker compose.
 
 ---
 
@@ -95,9 +113,13 @@ chmod +x scripts/gen_certs.sh
 ```
 **Trusting the certificate on your Quest 3:**
 1. Put on the headset and open the **Meta Quest Browser**.
-2. Navigate to: `https://<HOST_IP>:8012/?ws=wss://<HOST_IP>:8012`
-   *(Where `<HOST_IP>` is your Host PC's IP address on the network shared with the Quest, e.g. `10.47.132.246` or `192.168.123.2`.)*
-3. Tap **Advanced** → **Proceed to (unsafe)**. This stores the security exception so future sessions connect without prompts.
+2. Navigate to: `https://<HOST_IP>:8012`
+   *(Replace `<HOST_IP>` with your Host PC's Wi-Fi IP, e.g. `10.47.132.246`.)*
+3. Tap **Advanced** → **Proceed to (unsafe)**. This stores the security exception so the Vuer WebSocket (`wss://HOST_IP:8012`) can connect without being silently dropped.
+4. Then visit the Vuer frontend: `https://vuer.ai?ws=wss://<HOST_IP>:8012&grid=False` and tap **Enter VR**.
+
+> [!IMPORTANT]
+> Steps 2–3 must be repeated any time you regenerate certs (`./scripts/gen_certs.sh`) or clear the Quest browser data. A missing cert trust causes an **immediate WebSocket disconnect** — the camera overlay will never appear even though the Quest seems connected.
 
 ### 4. Build the Host Container
 Finally, build the host teleop container before running the Fast Track steps above:
