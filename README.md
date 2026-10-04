@@ -3,7 +3,9 @@
 Teleoperation of the **Unitree G1 (29 DoF) + Dex3-1 dexterous hands** using a **Meta Quest 3** headset.  
 Based on [unitreerobotics/xr_teleoperate](https://github.com/unitreerobotics/xr_teleoperate) v1.5, fully containerised with Docker.
 
-<video src="G1_split_screen_30min%20(online-video-cutter.com)%20(1).mp4" controls="controls" style="max-width: 100%;"></video>
+[![G1 XR teleoperation demo](media/readme_preview.gif)](G1_split_screen_30min%20(online-video-cutter.com)%20(1).mp4)
+
+Click the preview to open the full video.
 
 ---
 
